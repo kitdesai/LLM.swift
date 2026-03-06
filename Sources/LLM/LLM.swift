@@ -310,7 +310,7 @@ public actor LLMCore {
         return true
     }
     
-    func resetContext() {
+    public func resetContext() {
         currentTokenCount = 0
         tokenBuffer.removeAll()
         shouldContinuePredicting = false

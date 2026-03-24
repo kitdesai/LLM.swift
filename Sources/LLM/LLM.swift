@@ -115,7 +115,7 @@ public actor LLMCore {
         llama_sampler_chain_add(sampler!, llama_sampler_init_dist(seed))
     }
     
-    public init(model: Model, path: [CChar], seed: UInt32, topK: Int32, topP: Float, temp: Float, repeatPenalty: Float, repetitionLookback: Int32, maxTokenCount: Int) throws {
+    public init(model: Model, path: [CChar], seed: UInt32, topK: Int32, topP: Float, temp: Float, repeatPenalty: Float, repetitionLookback: Int32, maxTokenCount: Int, enableEmbeddings: Bool = true, flashAttention: Bool = false) throws {
         LLM.ensureInitialized()
         self.model = model
         self.vocab = llama_model_get_vocab(model)
@@ -127,14 +127,15 @@ public actor LLMCore {
         self.repetitionLookback = repetitionLookback
         self.maxTokenCount = maxTokenCount
         self.totalTokenCount = Int(llama_vocab_n_tokens(vocab))
-        
+
         var contextParams = llama_context_default_params()
         let processorCount = Int32(ProcessInfo().processorCount)
         contextParams.n_ctx = UInt32(maxTokenCount)
         contextParams.n_batch = contextParams.n_ctx
         contextParams.n_threads = processorCount
         contextParams.n_threads_batch = processorCount
-        contextParams.embeddings = true
+        contextParams.embeddings = enableEmbeddings
+        contextParams.flash_attn_type = flashAttention ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_DISABLED
         self.params = contextParams
         
         guard let context = llama_init_from_model(model, params) else {
@@ -1285,7 +1286,10 @@ open class LLM: ObservableObject {
         repeatPenalty: Float = 1.2,
         repetitionLookback: Int32 = 64,
         historyLimit: Int = 8,
-        maxTokenCount: Int32 = 2048
+        maxTokenCount: Int32 = 2048,
+        gpuLayers: Int32 = -1,
+        enableEmbeddings: Bool = false,
+        flashAttention: Bool = true
     ) {
         LLM.silenceLogging()
         self.path = path.cString(using: .utf8)!
@@ -1297,21 +1301,23 @@ open class LLM: ObservableObject {
         self.history = history
         self.repeatPenalty = repeatPenalty
         self.repetitionLookback = repetitionLookback
-        
+
         #if DEBUG
         print("GNERATING WITH SEEED: \(seed)")
         #endif
         var modelParams = llama_model_default_params()
         #if targetEnvironment(simulator)
         modelParams.n_gpu_layers = 0
+        #else
+        modelParams.n_gpu_layers = gpuLayers
         #endif
         guard let model = llama_model_load_from_file(self.path, modelParams) else {
             return nil
         }
         self.model = model
-        
+
         let finalMaxTokenCount = Int(min(maxTokenCount, llama_model_n_ctx_train(model)))
-        
+
         do {
             self.core = try LLMCore(
                 model: model,
@@ -1322,7 +1328,9 @@ open class LLM: ObservableObject {
                 temp: temp,
                 repeatPenalty: repeatPenalty,
                 repetitionLookback: repetitionLookback,
-                maxTokenCount: finalMaxTokenCount
+                maxTokenCount: finalMaxTokenCount,
+                enableEmbeddings: enableEmbeddings,
+                flashAttention: flashAttention
             )
             
             if let stopSequence {
@@ -1347,7 +1355,10 @@ open class LLM: ObservableObject {
         repeatPenalty: Float = 1.2,
         repetitionLookback: Int32 = 64,
         historyLimit: Int = 8,
-        maxTokenCount: Int32 = 2048
+        maxTokenCount: Int32 = 2048,
+        gpuLayers: Int32 = -1,
+        enableEmbeddings: Bool = false,
+        flashAttention: Bool = true
     ) {
         self.init(
             from: url.path,
@@ -1360,10 +1371,13 @@ open class LLM: ObservableObject {
             repeatPenalty: repeatPenalty,
             repetitionLookback: repetitionLookback,
             historyLimit: historyLimit,
-            maxTokenCount: maxTokenCount
+            maxTokenCount: maxTokenCount,
+            gpuLayers: gpuLayers,
+            enableEmbeddings: enableEmbeddings,
+            flashAttention: flashAttention
         )
     }
-    
+
     public convenience init?(
         from url: URL,
         template: Template,
@@ -1375,7 +1389,10 @@ open class LLM: ObservableObject {
         repeatPenalty: Float = 1.2,
         repetitionLookback: Int32 = 64,
         historyLimit: Int = 8,
-        maxTokenCount: Int32 = 2048
+        maxTokenCount: Int32 = 2048,
+        gpuLayers: Int32 = -1,
+        enableEmbeddings: Bool = false,
+        flashAttention: Bool = true
     ) {
         self.init(
             from: url.path,
@@ -1388,12 +1405,15 @@ open class LLM: ObservableObject {
             repeatPenalty: repeatPenalty,
             repetitionLookback: repetitionLookback,
             historyLimit: historyLimit,
-            maxTokenCount: maxTokenCount
+            maxTokenCount: maxTokenCount,
+            gpuLayers: gpuLayers,
+            enableEmbeddings: enableEmbeddings,
+            flashAttention: flashAttention
         )
         self.preprocess = template.preprocess
         self.template = template
     }
-    
+
     public convenience init?(
         from huggingFaceModel: HuggingFaceModel,
         to url: URL = .documentsDirectory,
@@ -1407,6 +1427,9 @@ open class LLM: ObservableObject {
         repetitionLookback: Int32 = 64,
         historyLimit: Int = 8,
         maxTokenCount: Int32 = 2048,
+        gpuLayers: Int32 = -1,
+        enableEmbeddings: Bool = false,
+        flashAttention: Bool = true,
         updateProgress: @Sendable @escaping (Double) -> Void = { print(String(format: "downloaded(%.2f%%)", $0 * 100)) }
     ) async throws {
         let url = try await huggingFaceModel.download(to: url, as: name) { progress in
@@ -1423,7 +1446,10 @@ open class LLM: ObservableObject {
             repeatPenalty: repeatPenalty,
             repetitionLookback: repetitionLookback,
             historyLimit: historyLimit,
-            maxTokenCount: maxTokenCount
+            maxTokenCount: maxTokenCount,
+            gpuLayers: gpuLayers,
+            enableEmbeddings: enableEmbeddings,
+            flashAttention: flashAttention
         )
         await setupThinkingTokens(from: huggingFaceModel.template)
     }

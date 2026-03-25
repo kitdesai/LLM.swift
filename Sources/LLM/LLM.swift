@@ -115,7 +115,7 @@ public actor LLMCore {
         llama_sampler_chain_add(sampler!, llama_sampler_init_dist(seed))
     }
     
-    public init(model: Model, path: [CChar], seed: UInt32, topK: Int32, topP: Float, temp: Float, repeatPenalty: Float, repetitionLookback: Int32, maxTokenCount: Int, enableEmbeddings: Bool = true, flashAttention: Bool = false) throws {
+    public init(model: Model, path: [CChar], seed: UInt32, topK: Int32, topP: Float, temp: Float, repeatPenalty: Float, repetitionLookback: Int32, maxTokenCount: Int, enableEmbeddings: Bool = true, flashAttention: Bool = false, kvCacheQuantized: Bool = false) throws {
         LLM.ensureInitialized()
         self.model = model
         self.vocab = llama_model_get_vocab(model)
@@ -136,6 +136,10 @@ public actor LLMCore {
         contextParams.n_threads_batch = processorCount
         contextParams.embeddings = enableEmbeddings
         contextParams.flash_attn_type = flashAttention ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_DISABLED
+        if kvCacheQuantized {
+            contextParams.type_k = GGML_TYPE_Q8_0
+            contextParams.type_v = GGML_TYPE_Q8_0
+        }
         self.params = contextParams
         
         guard let context = llama_init_from_model(model, params) else {
@@ -1289,7 +1293,8 @@ open class LLM: ObservableObject {
         maxTokenCount: Int32 = 2048,
         gpuLayers: Int32 = -1,
         enableEmbeddings: Bool = false,
-        flashAttention: Bool = true
+        flashAttention: Bool = true,
+        kvCacheQuantized: Bool = false
     ) {
         LLM.silenceLogging()
         self.path = path.cString(using: .utf8)!
@@ -1330,7 +1335,8 @@ open class LLM: ObservableObject {
                 repetitionLookback: repetitionLookback,
                 maxTokenCount: finalMaxTokenCount,
                 enableEmbeddings: enableEmbeddings,
-                flashAttention: flashAttention
+                flashAttention: flashAttention,
+                kvCacheQuantized: kvCacheQuantized
             )
             
             if let stopSequence {
@@ -1358,7 +1364,8 @@ open class LLM: ObservableObject {
         maxTokenCount: Int32 = 2048,
         gpuLayers: Int32 = -1,
         enableEmbeddings: Bool = false,
-        flashAttention: Bool = true
+        flashAttention: Bool = true,
+        kvCacheQuantized: Bool = false
     ) {
         self.init(
             from: url.path,
@@ -1374,7 +1381,8 @@ open class LLM: ObservableObject {
             maxTokenCount: maxTokenCount,
             gpuLayers: gpuLayers,
             enableEmbeddings: enableEmbeddings,
-            flashAttention: flashAttention
+            flashAttention: flashAttention,
+            kvCacheQuantized: kvCacheQuantized
         )
     }
 
@@ -1392,7 +1400,8 @@ open class LLM: ObservableObject {
         maxTokenCount: Int32 = 2048,
         gpuLayers: Int32 = -1,
         enableEmbeddings: Bool = false,
-        flashAttention: Bool = true
+        flashAttention: Bool = true,
+        kvCacheQuantized: Bool = false
     ) {
         self.init(
             from: url.path,
@@ -1408,7 +1417,8 @@ open class LLM: ObservableObject {
             maxTokenCount: maxTokenCount,
             gpuLayers: gpuLayers,
             enableEmbeddings: enableEmbeddings,
-            flashAttention: flashAttention
+            flashAttention: flashAttention,
+            kvCacheQuantized: kvCacheQuantized
         )
         self.preprocess = template.preprocess
         self.template = template
@@ -1430,6 +1440,7 @@ open class LLM: ObservableObject {
         gpuLayers: Int32 = -1,
         enableEmbeddings: Bool = false,
         flashAttention: Bool = true,
+        kvCacheQuantized: Bool = false,
         updateProgress: @Sendable @escaping (Double) -> Void = { print(String(format: "downloaded(%.2f%%)", $0 * 100)) }
     ) async throws {
         let url = try await huggingFaceModel.download(to: url, as: name) { progress in
@@ -1449,7 +1460,8 @@ open class LLM: ObservableObject {
             maxTokenCount: maxTokenCount,
             gpuLayers: gpuLayers,
             enableEmbeddings: enableEmbeddings,
-            flashAttention: flashAttention
+            flashAttention: flashAttention,
+            kvCacheQuantized: kvCacheQuantized
         )
         await setupThinkingTokens(from: huggingFaceModel.template)
     }
